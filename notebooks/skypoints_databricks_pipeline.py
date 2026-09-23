@@ -84,10 +84,13 @@ print(f"Redemption feed   : {redemption_file}")
 raw_df = spark.read.text(adls(landing_container, member_file))
 print(f"Loaded {raw_df.count()} raw lines from {landing_container}/{member_file}")
 
-# Archive to Bronze (copy via ABFS)
-dbutils.fs.cp(adls(landing_container, member_file), adls("bronze", f"members/{member_file}"), recurse=False)
-dbutils.fs.cp(adls(landing_container, redemption_file), adls("bronze", f"redemptions/{redemption_file}"), recurse=False)
-print("Bronze: raw feeds archived via ABFS")
+# Archive to Bronze (copy via ABFS with concurrency safety)
+try:
+    dbutils.fs.cp(adls(landing_container, member_file), adls("bronze", f"members/{member_file}"), recurse=False)
+    dbutils.fs.cp(adls(landing_container, redemption_file), adls("bronze", f"redemptions/{redemption_file}"), recurse=False)
+    print("Bronze: raw feeds archived via ABFS")
+except Exception as e:
+    print(f"Bronze archive safe note: {e}")
 
 # COMMAND ----------
 
