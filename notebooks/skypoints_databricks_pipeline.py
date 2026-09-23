@@ -89,17 +89,21 @@ detail_df = raw_df.filter(F.col("value").startswith("|D|") | F.col("value").star
 
 split_col = F.split(F.regexp_replace(F.col("value"), "^\\|", ""), "\\|")
 
+def clean_str(col_idx):
+    c = F.trim(split_col.getItem(col_idx))
+    return F.when((c == "") | (c.isNull()), None).otherwise(c)
+
 parsed_df = detail_df.select(
-    F.trim(split_col.getItem(1)).alias("member_name"),
-    F.trim(split_col.getItem(2)).alias("member_id"),
-    F.to_date(F.trim(split_col.getItem(3)), "yyyyMMdd").alias("enrollment_date"),
-    F.to_date(F.trim(split_col.getItem(4)), "yyyyMMdd").alias("last_flight_date"),
-    F.nullif(F.trim(split_col.getItem(5)), "").alias("tier_code"),
-    F.nullif(F.trim(split_col.getItem(6)), "").alias("agent_name"),
-    F.nullif(F.trim(split_col.getItem(7)), "").alias("state"),
-    F.upper(F.nullif(F.trim(split_col.getItem(8)), "")).alias("country"),
-    F.lpad(F.trim(split_col.getItem(9)), 8, "0").alias("raw_dob"),
-    F.coalesce(F.nullif(F.trim(split_col.getItem(10)), ""), F.lit("A")).alias("is_active")
+    clean_str(1).alias("member_name"),
+    clean_str(2).alias("member_id"),
+    F.to_date(clean_str(3), "yyyyMMdd").alias("enrollment_date"),
+    F.to_date(clean_str(4), "yyyyMMdd").alias("last_flight_date"),
+    clean_str(5).alias("tier_code"),
+    clean_str(6).alias("agent_name"),
+    clean_str(7).alias("state"),
+    F.upper(clean_str(8)).alias("country"),
+    F.lpad(F.coalesce(clean_str(9), F.lit("")), 8, "0").alias("raw_dob"),
+    F.coalesce(clean_str(10), F.lit("A")).alias("is_active")
 ).withColumn(
     "date_of_birth",
     F.coalesce(
