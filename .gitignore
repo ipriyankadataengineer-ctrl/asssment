@@ -7,3 +7,4 @@ data/output/
 *.env
 *.pdf
 build_master_pdf.py
+build_50_questions_guide.py
