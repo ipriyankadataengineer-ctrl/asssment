@@ -1,146 +1,232 @@
 {
-  "description": "Daily Orchestration Pipeline for SkyPoints Airline Loyalty Program: Validates daily landing feeds, triggers distributed Databricks ETL, populates Country Marts and Fact Redemptions.",
-  "activities": [
-    {
-      "name": "Check_Member_Feed_Exists",
-      "description": "Verifies that the daily member flat file feed has landed in ADLS Gen2 landing container.",
-      "type": "GetMetadata",
-      "dependsOn": [],
-      "policy": {
-        "timeout": "0.12:00:00",
-        "retry": 2,
-        "retryIntervalInSeconds": 30,
-        "secureOutput": false,
-        "secureInput": false
+  "name": "pipeline_skypoints_orchestrator",
+  "properties": {
+    "description": "Dynamic Production Orchestration Pipeline for SkyPoints Loyalty: Parameterized to handle any member flat file (.csv/.txt/.dat) and redemption JSON feed.",
+    "parameters": {
+      "MemberFileName": {
+        "type": "string",
+        "defaultValue": "sample_member_feed.txt"
       },
-      "userProperties": [],
-      "typeProperties": {
-        "dataset": {
-          "referenceName": "ds_landing_member_feed",
-          "type": "DatasetReference"
-        },
-        "fieldList": [
-          "exists",
-          "size"
-        ],
-        "storeSettings": {
-          "type": "AzureBlobFSReadSettings",
-          "recursive": false,
-          "enablePartitionDiscovery": false
-        }
+      "RedemptionFileName": {
+        "type": "string",
+        "defaultValue": "sample_redemptions.json"
+      },
+      "LandingContainer": {
+        "type": "string",
+        "defaultValue": "landing"
       }
     },
-    {
-      "name": "Check_Redemption_Feed_Exists",
-      "description": "Verifies that the daily JSON redemption feed has landed in ADLS Gen2 landing container.",
-      "type": "GetMetadata",
-      "dependsOn": [],
-      "policy": {
-        "timeout": "0.12:00:00",
-        "retry": 2,
-        "retryIntervalInSeconds": 30,
-        "secureOutput": false,
-        "secureInput": false
+    "variables": {
+      "PipelineStatus": {
+        "type": "String",
+        "defaultValue": "INITIALIZED"
       },
-      "userProperties": [],
-      "typeProperties": {
-        "dataset": {
-          "referenceName": "ds_landing_redemption_feed",
-          "type": "DatasetReference"
-        },
-        "fieldList": [
-          "exists",
-          "size"
-        ],
-        "storeSettings": {
-          "type": "AzureBlobFSReadSettings",
-          "recursive": false,
-          "enablePartitionDiscovery": false
-        }
+      "ExecutionLog": {
+        "type": "String"
       }
     },
-    {
-      "name": "Validate_Feeds_And_Process",
-      "description": "Gatekeeper: Verifies both landing feeds exist before processing.",
-      "type": "IfCondition",
-      "dependsOn": [
-        {
-          "activity": "Check_Member_Feed_Exists",
-          "dependencyConditions": [
-            "Succeeded"
-          ]
-        },
-        {
-          "activity": "Check_Redemption_Feed_Exists",
-          "dependencyConditions": [
-            "Succeeded"
-          ]
+    "activities": [
+      {
+        "name": "Set_Status_Validating",
+        "description": "Updates pipeline variable to track validation phase.",
+        "type": "SetVariable",
+        "dependsOn": [],
+        "userProperties": [],
+        "typeProperties": {
+          "variableName": "PipelineStatus",
+          "value": "VALIDATING_FEEDS"
         }
-      ],
-      "userProperties": [],
-      "typeProperties": {
-        "expression": {
-          "value": "@and(activity('Check_Member_Feed_Exists').output.exists, activity('Check_Redemption_Feed_Exists').output.exists)",
-          "type": "Expression"
-        },
-        "ifTrueActivities": [
+      },
+      {
+        "name": "Check_Member_Feed_Exists",
+        "description": "Verifies that the parameterized daily member flat file feed has landed in ADLS Gen2 landing container.",
+        "type": "GetMetadata",
+        "dependsOn": [
           {
-            "name": "Log_Landing_Verification_Passed",
-            "type": "Wait",
-            "dependsOn": [],
-            "userProperties": [],
-            "typeProperties": {
-              "waitTimeInSeconds": 1
-            }
+            "activity": "Set_Status_Validating",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
           }
         ],
-        "ifFalseActivities": [
-          {
-            "name": "Fail_Missing_Daily_Feeds",
-            "type": "Fail",
-            "dependsOn": [],
-            "userProperties": [],
-            "typeProperties": {
-              "message": "One or more daily feeds are missing in landing container. Ingestion aborted.",
-              "errorCode": "FEED_NOT_FOUND"
+        "policy": {
+          "timeout": "0.12:00:00",
+          "retry": 2,
+          "retryIntervalInSeconds": 30,
+          "secureOutput": false,
+          "secureInput": false
+        },
+        "userProperties": [],
+        "typeProperties": {
+          "dataset": {
+            "referenceName": "ds_landing_member_feed",
+            "type": "DatasetReference",
+            "parameters": {
+              "fileName": {
+                "value": "@pipeline().parameters.MemberFileName",
+                "type": "Expression"
+              },
+              "container": {
+                "value": "@pipeline().parameters.LandingContainer",
+                "type": "Expression"
+              }
             }
+          },
+          "fieldList": [
+            "exists",
+            "size"
+          ],
+          "storeSettings": {
+            "type": "AzureBlobFSReadSettings",
+            "recursive": false,
+            "enablePartitionDiscovery": false
           }
-        ]
-      }
-    },
-    {
-      "name": "Execute_Databricks_Loyalty_ETL",
-      "description": "Executes distributed PySpark loyalty transformations, staging derivations, window deduplication, and country routing on Azure Databricks.",
-      "type": "DatabricksNotebook",
-      "dependsOn": [
-        {
-          "activity": "Validate_Feeds_And_Process",
-          "dependencyConditions": [
-            "Succeeded"
+        }
+      },
+      {
+        "name": "Check_Redemption_Feed_Exists",
+        "description": "Verifies that the parameterized daily JSON redemption feed has landed in ADLS Gen2 landing container.",
+        "type": "GetMetadata",
+        "dependsOn": [
+          {
+            "activity": "Set_Status_Validating",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          }
+        ],
+        "policy": {
+          "timeout": "0.12:00:00",
+          "retry": 2,
+          "retryIntervalInSeconds": 30,
+          "secureOutput": false,
+          "secureInput": false
+        },
+        "userProperties": [],
+        "typeProperties": {
+          "dataset": {
+            "referenceName": "ds_landing_redemption_feed",
+            "type": "DatasetReference",
+            "parameters": {
+              "fileName": {
+                "value": "@pipeline().parameters.RedemptionFileName",
+                "type": "Expression"
+              },
+              "container": {
+                "value": "@pipeline().parameters.LandingContainer",
+                "type": "Expression"
+              }
+            }
+          },
+          "fieldList": [
+            "exists",
+            "size"
+          ],
+          "storeSettings": {
+            "type": "AzureBlobFSReadSettings",
+            "recursive": false,
+            "enablePartitionDiscovery": false
+          }
+        }
+      },
+      {
+        "name": "Validate_Feeds_And_Process",
+        "description": "Gatekeeper: Verifies both parameterized landing feeds exist before processing.",
+        "type": "IfCondition",
+        "dependsOn": [
+          {
+            "activity": "Check_Member_Feed_Exists",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          },
+          {
+            "activity": "Check_Redemption_Feed_Exists",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          }
+        ],
+        "userProperties": [],
+        "typeProperties": {
+          "expression": {
+            "value": "@and(activity('Check_Member_Feed_Exists').output.exists, activity('Check_Redemption_Feed_Exists').output.exists)",
+            "type": "Expression"
+          },
+          "ifTrueActivities": [
+            {
+              "name": "Set_Status_Processing",
+              "type": "SetVariable",
+              "dependsOn": [],
+              "userProperties": [],
+              "typeProperties": {
+                "variableName": "PipelineStatus",
+                "value": "FEEDS_VERIFIED_PROCESSING"
+              }
+            }
+          ],
+          "ifFalseActivities": [
+            {
+              "name": "Set_Status_Awaiting_Feeds",
+              "type": "SetVariable",
+              "dependsOn": [],
+              "userProperties": [],
+              "typeProperties": {
+                "variableName": "PipelineStatus",
+                "value": "AWAITING_REMAINING_FEEDS"
+              }
+            }
           ]
         }
-      ],
-      "policy": {
-        "timeout": "0.01:00:00",
-        "retry": 1,
-        "retryIntervalInSeconds": 30,
-        "secureOutput": false,
-        "secureInput": false
       },
-      "userProperties": [],
-      "typeProperties": {
-        "notebookPath": "/Shared/skypoints_databricks_pipeline",
-        "baseParameters": {}
-      },
-      "linkedServiceName": {
-        "referenceName": "ls_azure_databricks",
-        "type": "LinkedServiceReference"
+      {
+        "name": "Execute_Databricks_Loyalty_ETL",
+        "description": "Executes distributed PySpark loyalty transformations with dynamic file parameters.",
+        "type": "DatabricksNotebook",
+        "dependsOn": [
+          {
+            "activity": "Validate_Feeds_And_Process",
+            "dependencyConditions": [
+              "Succeeded"
+            ]
+          }
+        ],
+        "policy": {
+          "timeout": "0.01:00:00",
+          "retry": 1,
+          "retryIntervalInSeconds": 30,
+          "secureOutput": false,
+          "secureInput": false
+        },
+        "userProperties": [],
+        "typeProperties": {
+          "notebookPath": "/Shared/skypoints_databricks_pipeline",
+          "baseParameters": {
+            "member_file": {
+              "value": "@pipeline().parameters.MemberFileName",
+              "type": "Expression"
+            },
+            "redemption_file": {
+              "value": "@pipeline().parameters.RedemptionFileName",
+              "type": "Expression"
+            },
+            "container": {
+              "value": "@pipeline().parameters.LandingContainer",
+              "type": "Expression"
+            }
+          }
+        },
+        "linkedServiceName": {
+          "referenceName": "ls_azure_databricks",
+          "type": "LinkedServiceReference"
+        }
       }
-    }
-  ],
-  "annotations": [
-    "SkyPoints",
-    "AirlineLoyalty",
-    "MedallionArchitecture"
-  ]
+    ],
+    "annotations": [
+      "SkyPoints",
+      "AirlineLoyalty",
+      "MedallionArchitecture",
+      "Parameterized"
+    ]
+  }
 }

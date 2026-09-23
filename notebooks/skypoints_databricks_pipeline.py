@@ -23,21 +23,32 @@ STORAGE_CONN_STR = "DefaultEndpointsProtocol=https;AccountName=stskypointsspeubm
 from azure.storage.blob import BlobServiceClient
 blob_service = BlobServiceClient.from_connection_string(STORAGE_CONN_STR)
 
-# Dynamically locate member profile flat file (.csv, .txt, or .dat) from ADLS Gen2 landing container
-landing_client = blob_service.get_container_client("landing")
-landing_blobs = [b.name for b in landing_client.list_blobs()]
-member_candidates = [
-    b for b in landing_blobs 
-    if ("member" in b.lower() or "feed" in b.lower()) and b.endswith((".csv", ".txt", ".dat"))
-]
-target_member_blob = member_candidates[0] if member_candidates else "sample_member_feed.csv"
-print(f"Reading landing feed: '{target_member_blob}' (supported: .csv, .txt, .dat)")
+# Dynamic Parameter Ingestion from ADF Orchestrator
+try:
+    dbutils.widgets.text("member_file", "sample_member_feed.txt")
+    dbutils.widgets.text("redemption_file", "sample_redemptions.json")
+    dbutils.widgets.text("container", "landing")
+    target_member_blob = dbutils.widgets.get("member_file")
+    target_redemption_blob = dbutils.widgets.get("redemption_file")
+    target_container = dbutils.widgets.get("container")
+except Exception:
+    landing_client = blob_service.get_container_client("landing")
+    landing_blobs = [b.name for b in landing_client.list_blobs()]
+    member_cands = [b for b in landing_blobs if ("member" in b.lower() or "feed" in b.lower()) and b.lower().endswith((".csv", ".txt", ".dat"))]
+    redemp_cands = [b for b in landing_blobs if ("redemption" in b.lower() or "txn" in b.lower()) and b.lower().endswith(".json")]
+    target_member_blob = member_cands[0] if member_cands else "sample_member_feed.txt"
+    target_redemption_blob = redemp_cands[0] if redemp_cands else "sample_redemptions.json"
+    target_container = "landing"
 
-raw_flat_bytes = blob_service.get_blob_client("landing", target_member_blob).download_blob().readall()
+print(f"Reading landing container: '{target_container}'")
+print(f"Reading landing member feed: '{target_member_blob}' (dynamic parameter)")
+print(f"Reading landing redemption feed: '{target_redemption_blob}' (dynamic parameter)")
+
+raw_flat_bytes = blob_service.get_blob_client(target_container, target_member_blob).download_blob().readall()
 raw_lines = [line.strip() for line in raw_flat_bytes.decode("utf-8").splitlines() if line.strip()]
 
 # Read raw JSON redemption feed from ADLS Gen2 landing container
-raw_json_bytes = blob_service.get_blob_client("landing", "sample_redemptions.json").download_blob().readall()
+raw_json_bytes = blob_service.get_blob_client(target_container, target_redemption_blob).download_blob().readall()
 raw_json_data = json.loads(raw_json_bytes.decode("utf-8"))
 
 print(f"Loaded {len(raw_lines)} raw flat-file lines and {len(raw_json_data)} JSON member feeds from ADLS Gen2.")
@@ -200,3 +211,40 @@ member_360_df = deduped_df.join(
 
 member_360_df.write.format("delta").mode("overwrite").saveAsTable("member_redemptions_360")
 display(member_360_df)
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### 5. Direct Lakehouse ADLS Gen2 Storage Synchronization
+# MAGIC Materializes Bronze, Silver (Staging & Quarantine), and Gold (Country Tables & Marts) directly into ADLS Gen2 containers.
+
+# COMMAND ----------
+
+def sync_df_to_adls_json(df, container, blob_path):
+    records = [row.asDict(recursive=True) for row in df.collect()]
+    for r in records:
+        for k, v in r.items():
+            if hasattr(v, "isoformat"):
+                r[k] = v.isoformat()
+    json_bytes = json.dumps(records, indent=2, default=str).encode("utf-8")
+    blob_service.get_blob_client(container, blob_path).upload_blob(json_bytes, overwrite=True)
+    print(f"Synced {len(records)} records to ADLS Gen2 -> {container}/{blob_path}")
+
+# 1. Bronze archive
+blob_service.get_blob_client("bronze", f"members/{target_member_blob}").upload_blob(raw_flat_bytes, overwrite=True)
+blob_service.get_blob_client("bronze", f"redemptions/{target_redemption_blob}").upload_blob(raw_json_bytes, overwrite=True)
+
+# 2. Silver Tier
+sync_df_to_adls_json(stg_df, "silver", "staging/stg_member_profiles.json")
+sync_df_to_adls_json(quarantine_df, "silver", "quarantine/quarantine_members.json")
+
+# 3. Gold Tier
+for country_code in ["USA", "IND", "CAN", "PHIL", "AU"]:
+    c_df = deduped_df.filter(F.col("country") == country_code)
+    sync_df_to_adls_json(c_df, "gold", f"country_tables/table_{country_code.lower()}.json")
+
+sync_df_to_adls_json(flattened_redemptions_df, "gold", "marts/fact_redemptions.json")
+sync_df_to_adls_json(member_360_df, "gold", "marts/member_redemptions_360.json")
+
+print("All Medallion tiers successfully synchronized to ADLS Gen2 Lakehouse containers!")
+

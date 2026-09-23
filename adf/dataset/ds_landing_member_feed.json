@@ -1,18 +1,37 @@
 {
-  "linkedServiceName": {
-    "referenceName": "ls_adls_gen2",
-    "type": "LinkedServiceReference"
-  },
-  "type": "DelimitedText",
-  "typeProperties": {
-    "location": {
-      "type": "AzureBlobFSLocation",
-      "fileName": "sample_member_feed.csv",
-      "fileSystem": "landing"
+  "name": "ds_landing_member_feed",
+  "properties": {
+    "linkedServiceName": {
+      "referenceName": "ls_adls_gen2",
+      "type": "LinkedServiceReference"
     },
-    "columnDelimiter": "|",
-    "escapeChar": "\\",
-    "firstRowAsHeader": false,
-    "quoteChar": "\""
+    "parameters": {
+      "fileName": {
+        "type": "String",
+        "defaultValue": "sample_member_feed.txt"
+      },
+      "container": {
+        "type": "String",
+        "defaultValue": "landing"
+      }
+    },
+    "type": "DelimitedText",
+    "typeProperties": {
+      "location": {
+        "type": "AzureBlobFSLocation",
+        "fileName": {
+          "value": "@dataset().fileName",
+          "type": "Expression"
+        },
+        "fileSystem": {
+          "value": "@dataset().container",
+          "type": "Expression"
+        }
+      },
+      "columnDelimiter": "|",
+      "escapeChar": "\\\\",
+      "firstRowAsHeader": false,
+      "quoteChar": "\""
+    }
   }
 }

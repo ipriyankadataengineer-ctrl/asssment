@@ -1,14 +1,33 @@
-﻿{
-  "linkedServiceName": {
-    "referenceName": "ls_adls_gen2",
-    "type": "LinkedServiceReference"
-  },
-  "type": "Json",
-  "typeProperties": {
-    "location": {
-      "type": "AzureBlobFSLocation",
-      "fileName": "sample_redemptions.json",
-      "fileSystem": "landing"
+{
+  "name": "ds_landing_redemption_feed",
+  "properties": {
+    "linkedServiceName": {
+      "referenceName": "ls_adls_gen2",
+      "type": "LinkedServiceReference"
+    },
+    "parameters": {
+      "fileName": {
+        "type": "String",
+        "defaultValue": "sample_redemptions.json"
+      },
+      "container": {
+        "type": "String",
+        "defaultValue": "landing"
+      }
+    },
+    "type": "Json",
+    "typeProperties": {
+      "location": {
+        "type": "AzureBlobFSLocation",
+        "fileName": {
+          "value": "@dataset().fileName",
+          "type": "Expression"
+        },
+        "fileSystem": {
+          "value": "@dataset().container",
+          "type": "Expression"
+        }
+      }
     }
   }
 }
