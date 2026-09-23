@@ -12,7 +12,7 @@
 # COMMAND ----------
 
 # BUG FIX 1: Install azure-storage-blob on the job cluster before importing
-%pip install azure-storage-blob --quiet
+# MAGIC %pip install azure-storage-blob --quiet
 
 # COMMAND ----------
 
