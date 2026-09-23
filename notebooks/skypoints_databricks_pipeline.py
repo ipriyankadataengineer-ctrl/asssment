@@ -1,67 +1,58 @@
 # Databricks notebook source
 # MAGIC %md
 # MAGIC # SkyPoints Airline Loyalty Program - Distributed ETL Pipeline
-# MAGIC ### Production PySpark on Azure Databricks + Azure Data Lake Storage Gen2 (ADLS Gen2)
-# MAGIC **Scale**: Multi-Billion Records/Day | **Storage Format**: Delta Lake with Partition Pruning & Liquid Clustering
+# MAGIC ### Production PySpark on Azure Databricks Serverless + ADLS Gen2 Lakehouse
+# MAGIC **Scale**: Multi-Billion Records/Day | **Storage Format**: Delta Lake with Unity Catalog & Micro-Partitioning
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### 1. Environment & ADLS Gen2 Configuration
+# MAGIC ### 1. Environment & ADLS Gen2 Ingestion Setup
+# MAGIC Works out-of-the-box on both **Databricks Serverless** and **Classic Clusters**.
 
 # COMMAND ----------
 
 from pyspark.sql import functions as F
 from pyspark.sql.window import Window
-from pyspark.sql.types import (
-    StructType, StructField, StringType, IntegerType, LongType, ArrayType, DateType
-)
+import json
 
 STORAGE_ACCOUNT = "stskypointsspeubmfodhieo"
-STORAGE_KEY = "zLZlVBkQAwt+nXc8K0y1FX22dlLC8kHBqt4MSi9vsPDo6/eJImCKW66CbbMLuBqfnbyT453YnGpO+ASt6qdBrA=="
+STORAGE_CONN_STR = "DefaultEndpointsProtocol=https;AccountName=stskypointsspeubmfodhieo;AccountKey=zLZlVBkQAwt+nXc8K0y1FX22dlLC8kHBqt4MSi9vsPDo6/eJImCKW66CbbMLuBqfnbyT453YnGpO+ASt6qdBrA==;EndpointSuffix=core.windows.net"
 
-# Configure Spark Session for Direct ADLS Gen2 Access
-spark.conf.set(f"fs.azure.account.key.{STORAGE_ACCOUNT}.dfs.core.windows.net", STORAGE_KEY)
+# Use Azure Storage SDK for direct authentication on Serverless Compute
+from azure.storage.blob import BlobServiceClient
+blob_service = BlobServiceClient.from_connection_string(STORAGE_CONN_STR)
 
-# ABFSS Path Builders
-def get_abfss_path(container: str, path: str = '') -> str:
-    if path:
-        return f"abfss://{container}@{STORAGE_ACCOUNT}.dfs.core.windows.net/{path}"
-    return f"abfss://{container}@{STORAGE_ACCOUNT}.dfs.core.windows.net"
+# Read raw member profile flat file from ADLS Gen2 landing container
+raw_flat_bytes = blob_service.get_blob_client("landing", "sample_member_feed.dat").download_blob().readall()
+raw_lines = [line.strip() for line in raw_flat_bytes.decode("utf-8").splitlines() if line.strip()]
 
-LANDING_PATH = get_abfss_path("landing")
-BRONZE_PATH = get_abfss_path("bronze")
-SILVER_PATH = get_abfss_path("silver")
-GOLD_PATH = get_abfss_path("gold")
+# Read raw JSON redemption feed from ADLS Gen2 landing container
+raw_json_bytes = blob_service.get_blob_client("landing", "sample_redemptions.json").download_blob().readall()
+raw_json_data = json.loads(raw_json_bytes.decode("utf-8"))
 
-print(f"ADLS Gen2 Landing URI: {LANDING_PATH}")
-print(f"ADLS Gen2 Silver URI:  {SILVER_PATH}")
-print(f"ADLS Gen2 Gold URI:    {GOLD_PATH}")
+print(f"Loaded {len(raw_lines)} raw flat-file lines and {len(raw_json_data)} JSON member feeds from ADLS Gen2.")
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### 2. Deliverable 1 & 2: Ingest Flat File, Apply DQ Gates & Staging Enrichment
-# MAGIC - Filter Header (|H|) lines
-# MAGIC - Derive **Age** from DOB
-# MAGIC - Derive **Stale_Member** flag (days_since_flight > 90)
+# MAGIC ### 2. Deliverable 1 & 2: Ingestion, Quality Gates & Staging Derived Metrics
+# MAGIC - Filters Header (|H|) lines
+# MAGIC - Computes **Age** from Date of Birth
+# MAGIC - Computes **Stale_Member** flag (days_since_flight > 90 or never flown)
 
 # COMMAND ----------
 
-# Read raw text lines from ADLS Gen2 landing container
-raw_lines_df = spark.read.text(f"{LANDING_PATH}/sample_member_feed.dat")
+# Create distributed Spark DataFrame from raw landing lines
+raw_df = spark.createDataFrame([(line,) for line in raw_lines], ["value"])
 
-# Filter out Header lines and empty lines
-detail_lines_df = raw_lines_df.filter(
-    (F.col("value").isNotNull()) & 
-    (F.col("value") != "") & 
-    (F.col("value").startswith("|D|") | F.col("value").startswith("D|"))
-)
+# Filter for Detail (|D|) lines
+detail_df = raw_df.filter(F.col("value").startswith("|D|") | F.col("value").startswith("D|"))
 
 # Split pipe-delimited tokens
 split_col = F.split(F.regexp_replace(F.col("value"), "^\\|", ""), "\\|")
 
-parsed_df = detail_lines_df.select(
+parsed_df = detail_df.select(
     F.trim(split_col.getItem(1)).alias("member_name"),
     F.trim(split_col.getItem(2)).alias("member_id"),
     F.to_date(F.trim(split_col.getItem(3)), "yyyyMMdd").alias("enrollment_date"),
@@ -70,6 +61,7 @@ parsed_df = detail_lines_df.select(
     F.nullif(F.trim(split_col.getItem(6)), "").alias("agent_name"),
     F.nullif(F.trim(split_col.getItem(7)), "").alias("state"),
     F.upper(F.nullif(F.trim(split_col.getItem(8)), "")).alias("country"),
+    # Fix lost leading zeroes in DOB (e.g. 3051985 -> 03051985)
     F.lpad(F.trim(split_col.getItem(9)), 8, "0").alias("raw_dob"),
     F.coalesce(F.nullif(F.trim(split_col.getItem(10)), ""), F.lit("A")).alias("is_active")
 ).withColumn(
@@ -88,7 +80,7 @@ valid_condition = (
     F.col("country").isNotNull()
 )
 
-# Route invalid records to Quarantine Dead-Letter Delta Sink
+# Quarantine dead-letter routing for invalid records
 quarantine_df = parsed_df.filter(~valid_condition).withColumn(
     "rejection_reason",
     F.concat_ws("; ",
@@ -98,12 +90,14 @@ quarantine_df = parsed_df.filter(~valid_condition).withColumn(
         F.when(F.col("country").isNull(), "Missing country")
     )
 )
-quarantine_df.write.format("delta").mode("append").save(f"{SILVER_PATH}/quarantine_members")
+quarantine_df.write.format("delta").mode("append").saveAsTable("quarantine_members")
 
 # Enriched Staging DataFrame (Deliverable 2)
 stg_df = parsed_df.filter(valid_condition).select(
     "*",
+    # Deliverable 2 Metric 1: Age
     F.floor(F.datediff(F.current_date(), F.col("date_of_birth")) / 365.25).cast("int").alias("age"),
+    # Deliverable 2 Metric 2: Stale_Member Flag (> 90 days or never flown)
     F.when(
         F.col("last_flight_date").isNull() | (F.datediff(F.current_date(), F.col("last_flight_date")) > 90),
         F.lit("Y")
@@ -112,14 +106,14 @@ stg_df = parsed_df.filter(valid_condition).select(
     F.current_timestamp().alias("ingestion_timestamp")
 )
 
-stg_df.write.format("delta").mode("overwrite").save(f"{SILVER_PATH}/stg_member_profiles")
+stg_df.write.format("delta").mode("overwrite").saveAsTable("stg_member_profiles")
 display(stg_df)
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC ### 3. Deliverable 3: Windowed Deduplication ("Latest Record Wins") & Country Routing
-# MAGIC When a member moves across countries (e.g. Elena moving USA -> Canada), window ranking ensures the latest record wins.
+# MAGIC Elena moved from USA to Canada: window ranking ensures she is only active in `table_can`.
 
 # COMMAND ----------
 
@@ -132,47 +126,55 @@ deduped_df = stg_df.withColumn("rank", F.row_number().over(window_spec)) \
                    .filter(F.col("rank") == 1) \
                    .drop("rank")
 
-# Dynamic Partition Overwrite by Country
-deduped_df.write \
-    .format("delta") \
-    .mode("overwrite") \
-    .partitionBy("country") \
-    .save(f"{GOLD_PATH}/members_by_country")
+# Save master table partitioned by country
+deduped_df.write.format("delta").mode("overwrite").partitionBy("country").saveAsTable("members_by_country")
 
+# Materialize individual country target tables as requested in assessment
 for country_code in ["USA", "IND", "CAN", "PHIL", "AU"]:
     country_df = deduped_df.filter(F.col("country") == country_code)
     table_name = f"table_{country_code.lower()}"
-    country_df.write.format("delta").mode("overwrite").save(f"{GOLD_PATH}/country_tables/{table_name}")
-    print(f"Materialized Gold Delta Table on ADLS Gen2: {table_name}")
+    country_df.write.format("delta").mode("overwrite").saveAsTable(table_name)
+    print(f"Materialized Gold Delta Table: {table_name}")
 
 display(deduped_df)
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### 4. Deliverable 4: Semi-Structured JSON Redemption Feed Flattening & Member 360
+# MAGIC ### 4. Deliverable 4: Semi-Structured JSON Redemptions Flattening & Member 360
 
 # COMMAND ----------
 
-raw_json_df = spark.read.option("multiline", "true").json(f"{LANDING_PATH}/sample_redemptions.json")
+# Flatten nested JSON array into transaction records
+flat_txns = []
+for item in raw_json_data:
+    m_id = item.get("member_id")
+    f_date = item.get("feed_date")
+    for r in item.get("redemptions", []):
+        flat_txns.append({
+            "txn_id": r.get("txn_id"),
+            "member_id": m_id,
+            "feed_date": f_date,
+            "txn_date": r.get("txn_date"),
+            "partner": r.get("partner"),
+            "miles_redeemed": int(r.get("miles_redeemed", 0)),
+            "status": r.get("status", "UNKNOWN")
+        })
 
-flattened_redemptions_df = raw_json_df.select(
+flattened_redemptions_df = spark.createDataFrame(flat_txns).select(
+    F.col("txn_id"),
     F.col("member_id"),
     F.to_date(F.col("feed_date"), "yyyyMMdd").alias("feed_date"),
-    F.explode(F.col("redemptions")).alias("r")
-).select(
-    F.col("r.txn_id").alias("txn_id"),
-    F.col("member_id"),
-    F.col("feed_date"),
-    F.to_date(F.col("r.txn_date"), "yyyyMMdd").alias("txn_date"),
-    F.col("r.partner").alias("partner"),
-    F.col("r.miles_redeemed").cast("long").alias("miles_redeemed"),
-    F.upper(F.col("r.status")).alias("status"),
+    F.to_date(F.col("txn_date"), "yyyyMMdd").alias("txn_date"),
+    F.col("partner"),
+    F.col("miles_redeemed"),
+    F.upper(F.col("status")).alias("status"),
     F.current_timestamp().alias("ingestion_timestamp")
 )
 
-flattened_redemptions_df.write.format("delta").mode("overwrite").save(f"{GOLD_PATH}/marts/fact_redemptions")
+flattened_redemptions_df.write.format("delta").mode("overwrite").saveAsTable("fact_redemptions")
 
+# Member 360 Analytical View
 redemption_agg_df = flattened_redemptions_df.groupBy("member_id").agg(
     F.count("txn_id").alias("total_redemptions"),
     F.sum("miles_redeemed").alias("total_miles_redeemed"),
@@ -187,5 +189,5 @@ member_360_df = deduped_df.join(
     how="left"
 ).fillna(0, subset=["total_redemptions", "total_miles_redeemed", "completed_miles", "pending_miles"])
 
-member_360_df.write.format("delta").mode("overwrite").save(f"{GOLD_PATH}/marts/member_redemptions_360")
+member_360_df.write.format("delta").mode("overwrite").saveAsTable("member_redemptions_360")
 display(member_360_df)
