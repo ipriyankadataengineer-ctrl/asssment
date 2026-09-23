@@ -48,14 +48,25 @@ try:
     redemption_file = dbutils.widgets.get("redemption_file")
     landing_container = dbutils.widgets.get("container")
 except Exception:
-    # Fallback: auto-detect any member flat file and redemption JSON in landing
-    landing_files = [f.name for f in dbutils.fs.ls(adls("landing"))]
-    member_cands = [f for f in landing_files if ("member" in f.lower() or "feed" in f.lower())
-                    and f.lower().endswith((".csv", ".txt", ".dat"))]
-    redemp_cands = [f for f in landing_files if "redemption" in f.lower() and f.lower().endswith(".json")]
-    member_file = member_cands[0] if member_cands else "sample_member_feed.txt"
-    redemption_file = redemp_cands[0] if redemp_cands else "sample_redemptions.json"
+    member_file = "sample_member_feed.csv"
+    redemption_file = "sample_redemptions.json"
     landing_container = "landing"
+
+# Verify file existence in landing container; auto-resolve if file was renamed or different extension
+try:
+    available_files = [f.name for f in dbutils.fs.ls(adls(landing_container))]
+    if member_file not in available_files:
+        member_cands = [f for f in available_files if ("member" in f.lower() or "feed" in f.lower()) and f.lower().endswith((".csv", ".txt", ".dat"))]
+        if member_cands:
+            print(f"Notice: '{member_file}' not found. Auto-resolving to: '{member_cands[0]}'")
+            member_file = member_cands[0]
+    if redemption_file not in available_files:
+        redemp_cands = [f for f in available_files if "redemption" in f.lower() and f.lower().endswith(".json")]
+        if redemp_cands:
+            print(f"Notice: '{redemption_file}' not found. Auto-resolving to: '{redemp_cands[0]}'")
+            redemption_file = redemp_cands[0]
+except Exception as e:
+    print(f"Note on directory listing: {e}")
 
 print(f"Landing container : {landing_container}")
 print(f"Member feed       : {member_file}")
