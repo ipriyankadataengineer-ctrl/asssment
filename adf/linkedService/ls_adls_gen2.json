@@ -1,0 +1,10 @@
+﻿{
+  "type": "AzureBlobFS",
+  "typeProperties": {
+    "url": "https://stskypointsspeubmfodhieo.dfs.core.windows.net",
+    "accountKey": {
+      "type": "SecureString",
+      "value": "zLZlVBkQAwt+nXc8K0y1FX22dlLC8kHBqt4MSi9vsPDo6/eJImCKW66CbbMLuBqfnbyT453YnGpO+ASt6qdBrA=="
+    }
+  }
+}

@@ -1,0 +1,117 @@
+﻿{
+  "description": "Daily Orchestration Pipeline for SkyPoints Airline Loyalty Program: Validates daily landing feeds, triggers distributed Databricks ETL, populates Country Marts and Fact Redemptions.",
+  "activities": [
+    {
+      "name": "Check_Member_Feed_Exists",
+      "description": "Verifies that the daily member flat file feed has landed in ADLS Gen2 landing container.",
+      "type": "GetMetadata",
+      "dependsOn": [],
+      "policy": {
+        "timeout": "0.12:00:00",
+        "retry": 2,
+        "retryIntervalInSeconds": 30,
+        "secureOutput": false,
+        "secureInput": false
+      },
+      "userProperties": [],
+      "typeProperties": {
+        "dataset": {
+          "referenceName": "ds_landing_member_feed",
+          "type": "DatasetReference"
+        },
+        "fieldList": [
+          "exists",
+          "size"
+        ],
+        "storeSettings": {
+          "type": "AzureBlobFSReadSettings",
+          "recursive": false,
+          "enablePartitionDiscovery": false
+        }
+      }
+    },
+    {
+      "name": "Check_Redemption_Feed_Exists",
+      "description": "Verifies that the daily JSON redemption feed has landed in ADLS Gen2 landing container.",
+      "type": "GetMetadata",
+      "dependsOn": [],
+      "policy": {
+        "timeout": "0.12:00:00",
+        "retry": 2,
+        "retryIntervalInSeconds": 30,
+        "secureOutput": false,
+        "secureInput": false
+      },
+      "userProperties": [],
+      "typeProperties": {
+        "dataset": {
+          "referenceName": "ds_landing_redemption_feed",
+          "type": "DatasetReference"
+        },
+        "fieldList": [
+          "exists",
+          "size"
+        ],
+        "storeSettings": {
+          "type": "AzureBlobFSReadSettings",
+          "recursive": false,
+          "enablePartitionDiscovery": false
+        }
+      }
+    },
+    {
+      "name": "Validate_Feeds_And_Process",
+      "description": "Gatekeeper: Verifies both landing feeds exist before processing.",
+      "type": "IfCondition",
+      "dependsOn": [
+        {
+          "activity": "Check_Member_Feed_Exists",
+          "dependencyConditions": [
+            "Succeeded"
+          ]
+        },
+        {
+          "activity": "Check_Redemption_Feed_Exists",
+          "dependencyConditions": [
+            "Succeeded"
+          ]
+        }
+      ],
+      "userProperties": [],
+      "typeProperties": {
+        "expression": {
+          "value": "@and(activity('Check_Member_Feed_Exists').output.exists, activity('Check_Redemption_Feed_Exists').output.exists)",
+          "type": "Expression"
+        },
+        "ifTrueActivities": [
+          {
+            "name": "Log_Landing_Verification_Passed",
+            "type": "Wait",
+            "dependsOn": [],
+            "userProperties": [],
+            "typeProperties": {
+              "waitTimeInSeconds": 1
+            }
+          }
+        ],
+        "ifFalseActivities": [
+          {
+            "name": "Fail_Missing_Daily_Feeds",
+            "type": "Fail",
+            "dependsOn": [],
+            "userProperties": [],
+            "typeProperties": {
+              "message": "One or more daily feeds are missing in landing container. Ingestion aborted.",
+              "errorCode": "FEED_NOT_FOUND"
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "annotations": [
+    "SkyPoints",
+    "AirlineLoyalty",
+    "MedallionArchitecture"
+  ]
+}

@@ -1,0 +1,18 @@
+﻿{
+  "linkedServiceName": {
+    "referenceName": "ls_adls_gen2",
+    "type": "LinkedServiceReference"
+  },
+  "type": "DelimitedText",
+  "typeProperties": {
+    "location": {
+      "type": "AzureBlobFSLocation",
+      "fileName": "sample_member_feed.dat",
+      "fileSystem": "landing"
+    },
+    "columnDelimiter": "|",
+    "escapeChar": "\\",
+    "firstRowAsHeader": false,
+    "quoteChar": "\""
+  }
+}

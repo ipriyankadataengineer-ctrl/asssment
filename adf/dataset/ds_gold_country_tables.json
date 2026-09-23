@@ -1,0 +1,14 @@
+﻿{
+  "linkedServiceName": {
+    "referenceName": "ls_adls_gen2",
+    "type": "LinkedServiceReference"
+  },
+  "type": "Json",
+  "typeProperties": {
+    "location": {
+      "type": "AzureBlobFSLocation",
+      "folderPath": "country_tables",
+      "fileSystem": "gold"
+    }
+  }
+}

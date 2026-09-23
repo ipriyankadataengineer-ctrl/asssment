@@ -1,0 +1,10 @@
+﻿{
+  "type": "AzureDatabricks",
+  "typeProperties": {
+    "domain": "https://adb-7405606935596016.16.azuredatabricks.net",
+    "workspaceResourceId": "/subscriptions/9309ca0f-f25f-47e2-b887-bb4b9af961bf/resourceGroups/rg-skypoints-loyalty/providers/Microsoft.Databricks/workspaces/dbw-skypoints-loyalty",
+    "newClusterNodeType": "Standard_DS3_v2",
+    "newClusterNumOfWorkers": "2",
+    "newClusterVersion": "13.3.x-scala2.12"
+  }
+}

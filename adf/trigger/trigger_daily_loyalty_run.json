@@ -1,0 +1,30 @@
+﻿{
+  "name": "trigger_daily_loyalty_run",
+  "properties": {
+    "description": "Daily recurrence trigger executing SkyPoints Loyalty pipeline at 02:00 UTC.",
+    "annotations": [],
+    "runtimeState": "Stopped",
+    "pipelines": [
+      {
+        "pipelineReference": {
+          "referenceName": "pipeline_skypoints_orchestrator",
+          "type": "PipelineReference"
+        },
+        "parameters": {}
+      }
+    ],
+    "type": "ScheduleTrigger",
+    "typeProperties": {
+      "recurrence": {
+        "frequency": "Day",
+        "interval": 1,
+        "startTime": "2026-09-24T02:00:00Z",
+        "timeZone": "UTC",
+        "schedule": {
+          "hours": [2],
+          "minutes": [0]
+        }
+      }
+    }
+  }
+}
