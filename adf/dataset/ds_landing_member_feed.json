@@ -1,4 +1,4 @@
-﻿{
+{
   "linkedServiceName": {
     "referenceName": "ls_adls_gen2",
     "type": "LinkedServiceReference"
@@ -7,7 +7,7 @@
   "typeProperties": {
     "location": {
       "type": "AzureBlobFSLocation",
-      "fileName": "sample_member_feed.dat",
+      "fileName": "sample_member_feed.csv",
       "fileSystem": "landing"
     },
     "columnDelimiter": "|",

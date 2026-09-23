@@ -1,4 +1,4 @@
-﻿"""
+"""
 End-to-End Orchestration Pipeline for SkyPoints Airline Loyalty
 Executes the Medallion flow: Landing -> Staging -> Gold Country Marts & Redemptions
 """
@@ -25,7 +25,13 @@ def run_pipeline(
 ):
     """Executes the complete SkyPoints ETL pipeline."""
     if not member_feed_path:
-        member_feed_path = str(DATA_DIR / 'sample_member_feed.dat')
+        for ext in ['.csv', '.txt', '.dat']:
+            cand = DATA_DIR / f'sample_member_feed{ext}'
+            if cand.exists():
+                member_feed_path = str(cand)
+                break
+        if not member_feed_path:
+            member_feed_path = str(DATA_DIR / 'sample_member_feed.csv')
     if not redemption_feed_path:
         redemption_feed_path = str(DATA_DIR / 'sample_redemptions.json')
     if not output_dir:

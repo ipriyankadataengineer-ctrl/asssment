@@ -23,8 +23,17 @@ STORAGE_CONN_STR = "DefaultEndpointsProtocol=https;AccountName=stskypointsspeubm
 from azure.storage.blob import BlobServiceClient
 blob_service = BlobServiceClient.from_connection_string(STORAGE_CONN_STR)
 
-# Read raw member profile flat file from ADLS Gen2 landing container
-raw_flat_bytes = blob_service.get_blob_client("landing", "sample_member_feed.dat").download_blob().readall()
+# Dynamically locate member profile flat file (.csv, .txt, or .dat) from ADLS Gen2 landing container
+landing_client = blob_service.get_container_client("landing")
+landing_blobs = [b.name for b in landing_client.list_blobs()]
+member_candidates = [
+    b for b in landing_blobs 
+    if ("member" in b.lower() or "feed" in b.lower()) and b.endswith((".csv", ".txt", ".dat"))
+]
+target_member_blob = member_candidates[0] if member_candidates else "sample_member_feed.csv"
+print(f"Reading landing feed: '{target_member_blob}' (supported: .csv, .txt, .dat)")
+
+raw_flat_bytes = blob_service.get_blob_client("landing", target_member_blob).download_blob().readall()
 raw_lines = [line.strip() for line in raw_flat_bytes.decode("utf-8").splitlines() if line.strip()]
 
 # Read raw JSON redemption feed from ADLS Gen2 landing container
