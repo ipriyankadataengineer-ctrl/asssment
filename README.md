@@ -1,4 +1,4 @@
-﻿# SkyPoints Global Airline Loyalty Platform — Azure Cloud Native Architecture
+# SkyPoints Global Airline Loyalty Platform — Azure Cloud Native Architecture
 
 Production-grade, petabyte-scale data engineering platform for the SkyPoints loyalty program. Built and configured natively on **Microsoft Azure Cloud** using the **Medallion Architecture (Bronze -> Silver -> Gold)**, supporting daily ingestion of multi-billion row flat files and semi-structured JSON feeds.
 
@@ -46,7 +46,7 @@ Production-grade, petabyte-scale data engineering platform for the SkyPoints loy
 |---|---|---|---|
 | **Data Lake Storage** | `stskypointsspeubmfodhieo` | Central India | **ADLS Gen2** with Hierarchical Namespace enabled. Hosts Medallion containers: `landing`, `bronze`, `silver`, `gold`. |
 | **Compute & ETL** | `dbw-skypoints-loyalty` | Central India | **Azure Databricks (Premium)** with Unity Catalog & Serverless Spark execution for distributed Delta Lake processing. |
-| **Orchestration** | `adf-skypoints-loyalty` | Central India | **Azure Data Factory** orchestrator running daily ingestion validation, compute dispatch, and automated monitoring. |
+| **Orchestration** | `adf-skypoints-loyalty` | Central India | **Azure Data Factory** orchestrator running `pipeline_skypoints_orchestrator` with Event-Based Trigger (`tr_on_file_upload_landing`) via Azure Event Grid on ADLS Gen2 landing file uploads. |
 | **Data Warehouse DDL** | Snowflake / Delta Lake | Cloud DW | Production DDLs with micro-partitioning/clustering on `(country, member_id)` and SCD Type 1/2 tracking. |
 
 ---

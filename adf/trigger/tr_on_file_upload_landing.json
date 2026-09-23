@@ -1,0 +1,25 @@
+﻿{
+  "description": "Event-based trigger firing automatically whenever a new daily loyalty feed (CSV, TXT, DAT, or JSON) is uploaded to ADLS Gen2 landing container.",
+  "annotations": [
+    "SkyPoints",
+    "EventDriven",
+    "LandingIngestion"
+  ],
+  "type": "BlobEventsTrigger",
+  "typeProperties": {
+    "blobPathBeginsWith": "/landing/blobs/",
+    "events": [
+      "Microsoft.Storage.BlobCreated"
+    ],
+    "scope": "/subscriptions/9309ca0f-f25f-47e2-b887-bb4b9af961bf/resourceGroups/rg-skypoints-loyalty/providers/Microsoft.Storage/storageAccounts/stskypointsspeubmfodhieo"
+  },
+  "pipelines": [
+    {
+      "pipelineReference": {
+        "referenceName": "pipeline_skypoints_orchestrator",
+        "type": "PipelineReference"
+      },
+      "parameters": {}
+    }
+  ]
+}
