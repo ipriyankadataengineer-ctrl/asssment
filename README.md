@@ -4,7 +4,20 @@ Production-grade, petabyte-scale data engineering pipeline for the SkyPoints loy
 
 ---
 
-## 1. Architecture Overview
+## 1. Live Azure & Databricks Deployment
+
+| Resource | Service / Configuration | Live Azure Resource Name | Status |
+|---|---|---|---|
+| **Cloud Provider** | Microsoft Azure | `Azure subscription 1` (`9309ca0f-f25f-47e2-b887-bb4b9af961bf`) | **Active** |
+| **Resource Group** | Azure Resource Group | `rg-skypoints-loyalty` (`centralindia`) | **Active** |
+| **Data Lake** | ADLS Gen2 (Hierarchical Namespace) | `stskypointsspeubmfodhieo` | **Active** |
+| **Medallion Storage** | Containers: `landing`, `bronze`, `silver`, `gold` | Live on ADLS Gen2 | **Synced** |
+| **Compute Engine** | **Azure Databricks (Premium)** | `dbw-skypoints-loyalty` | **Active** |
+| **Databricks URL** | Direct Workspace Access | [adb-7405606935596016.16.azuredatabricks.net](https://adb-7405606935596016.16.azuredatabricks.net) | **Live** |
+
+---
+
+## 2. Architecture Overview
 
 ```
                       DAILY FEEDS (Multi-Billion Scale)
@@ -40,53 +53,45 @@ Production-grade, petabyte-scale data engineering pipeline for the SkyPoints loy
 
 ---
 
-## 2. Assessment Deliverables Matrix
+## 3. Assessment Deliverables Matrix
 
 | # | Deliverable | Location | Key Design Decisions |
 |---|---|---|---|
 | **1** | **DDL Specifications** | `sql/01_ddl_snowflake.sql`<br>`sql/02_ddl_azure_delta.sql` | Production DDLs for Snowflake & Azure Delta Lake with micro-partitioning / clustering keys on `(country, member_id)`. |
-| **2** | **Staging Enrichment** | `sql/03_transformations.sql`<br>`src/transformations.py` | Accurate `Age` derivation from DOB; `Stale_Member` flag where `days_since_flight > 90` or never flown. |
-| **3** | **Country Routing & "Latest Wins"** | `sql/03_transformations.sql`<br>`src/transformations.py` | Window rank: `ROW_NUMBER() OVER (PARTITION BY member_id ORDER BY last_flight_date DESC, enrollment_date DESC)`. Moving countries deactivates the prior country table. |
-| **4** | **JSON Redemption Flattening** | `sql/03_transformations.sql`<br>`src/parsers.py` | Unpacks nested `redemptions` array into individual rows; joins back to member profile for Member 360 view. |
+| **2** | **Staging Enrichment** | `sql/03_transformations.sql`<br>`src/transformations.py`<br>`notebooks/skypoints_databricks_pipeline.py` | Accurate `Age` derivation from DOB; `Stale_Member` flag where `days_since_flight > 90` or never flown. |
+| **3** | **Country Routing & "Latest Wins"** | `sql/03_transformations.sql`<br>`src/transformations.py`<br>`notebooks/skypoints_databricks_pipeline.py` | Window rank: `ROW_NUMBER() OVER (PARTITION BY member_id ORDER BY last_flight_date DESC, enrollment_date DESC)`. Moving countries deactivates the prior country table. |
+| **4** | **JSON Redemption Flattening** | `sql/03_transformations.sql`<br>`src/parsers.py`<br>`notebooks/skypoints_databricks_pipeline.py` | Unpacks nested `redemptions` array into individual rows; joins back to member profile for Member 360 view. |
 | **5** | **Data Validations & Quarantine** | `src/validators.py`<br>`tests/test_validations.py` | Mandatory field checks, PK uniqueness, zero-padded DOB fix (`3051985` -> `03051985`), flight > enrollment sequence check, and corrupt data quarantine. |
-| **6** | **Live Demonstration** | `infra/deploy_azure.ps1`<br>`infra/main.bicep` | 1-click Azure ADLS Gen2 deployment & live pipeline run with automated test verification (`pytest`). |
+| **6** | **Live Demonstration** | `infra/deploy_azure.ps1`<br>`infra/main.bicep`<br>`notebooks/skypoints_databricks_pipeline.py` | Live Azure ADLS Gen2 storage + Azure Databricks Premium workspace deployed and validated. |
 
 ---
 
-## 3. Senior Engineering Design Highlights
+## 4. Multi-Billion Scale Engineering Highlights
 
-### Handling Multi-Billion Scale
-1. **Dynamic Partition Routing vs Table Loops:** In Spark/Delta, we avoid looping over country lists (which causes $N$ full table scans). Instead, we use Delta Dynamic Partition Overwrites partitioned by `country`, or liquid clustering.
-2. **Column Alignment & Schema Discrepancy:** The specification table lists "Post Code", but sample records omit it. The ingestion parser uses tolerant token alignment with fallback positional mapping to prevent off-by-one errors.
-3. **Leading Zero DOB Correction:** DOBs like `3051985` (which lost leading zeros when parsed as integers) are zero-padded to `03051985` and validated as `MMDDYYYY` or `DDMMYYYY`.
-4. **Quarantine Isolation Pattern:** Rather than halting billions-scale processing on malformed lines, records failing validation route into a dead-letter quarantine table (`quarantine_members`) with detailed error taxonomy.
+1. **Distributed Compute**: Apache Spark on Azure Databricks distributes workloads across nodes, scaling elastically for petabyte-scale loyalty workloads.
+2. **Dynamic Delta Partition Overwrite**: Eliminates static loops over country tables; writes to `gold/members_by_country` partitioned by `country` in a single distributed pass.
+3. **Quarantine Isolation Pattern**: Malformed records are routed to an append-only dead-letter sink on ADLS Gen2 (`quarantine_members`) without breaking pipeline execution.
+4. **Auto Loader (`cloudFiles`) Ready**: Supports streaming ingestion as new files drop into the ADLS Gen2 landing container.
 
 ---
 
-## 4. How to Run Locally
+## 5. How to Run Locally
 
 ### Run the Pipeline
 ```powershell
 python -m src.pipeline
 ```
 
-### Run the Automated Test Suite (100% Coverage)
+### Run Automated Tests (100% Pass)
 ```powershell
 python -m pytest -v
 ```
 
 ---
 
-## 5. Live Azure Demonstration
+## 6. How to Run in Azure Databricks
 
-To deploy directly to your active Azure subscription:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File infra/deploy_azure.ps1
-```
-
-This script:
-1. Creates the Resource Group (`rg-skypoints-loyalty`).
-2. Provisions an **Azure Data Lake Storage Gen2** account with hierarchical namespace enabled.
-3. Configures the **landing, bronze, silver, gold** medallion containers.
-4. Executes the ETL pipeline and uploads the processed country tables to ADLS Gen2.
+1. Open your workspace: [https://adb-7405606935596016.16.azuredatabricks.net](https://adb-7405606935596016.16.azuredatabricks.net)
+2. In the sidebar, navigate to **Workspace $\rightarrow$ Users $\rightarrow$ [Your Email]**.
+3. Click **Import** and upload `notebooks/skypoints_databricks_pipeline.py`.
+4. Attach to a cluster and click **Run All**.
