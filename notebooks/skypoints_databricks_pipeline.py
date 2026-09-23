@@ -24,6 +24,7 @@ spark.conf.set(
     f"fs.azure.account.key.{STORAGE_ACCOUNT}.dfs.core.windows.net",
     STORAGE_KEY
 )
+spark.conf.set("spark.sql.ansi.enabled", "false")
 
 def adls(container, path=""):
     """Helper: returns the ABFS path for a container/path."""
@@ -107,8 +108,8 @@ parsed_df = detail_df.select(
 ).withColumn(
     "date_of_birth",
     F.coalesce(
-        F.to_date(F.col("raw_dob"), "MMddyyyy"),
-        F.to_date(F.col("raw_dob"), "ddMMyyyy")
+        F.expr("try_to_date(raw_dob, 'MMddyyyy')"),
+        F.expr("try_to_date(raw_dob, 'ddMMyyyy')")
     )
 ).drop("raw_dob")
 
