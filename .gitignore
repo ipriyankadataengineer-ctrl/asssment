@@ -6,3 +6,4 @@ data/output/
 .azure/
 *.env
 *.pdf
+build_master_pdf.py
