@@ -1,4 +1,4 @@
-﻿{
+{
   "description": "Daily Orchestration Pipeline for SkyPoints Airline Loyalty Program: Validates daily landing feeds, triggers distributed Databricks ETL, populates Country Marts and Fact Redemptions.",
   "activities": [
     {
@@ -106,6 +106,35 @@
             }
           }
         ]
+      }
+    },
+    {
+      "name": "Execute_Databricks_Loyalty_ETL",
+      "description": "Executes distributed PySpark loyalty transformations, staging derivations, window deduplication, and country routing on Azure Databricks.",
+      "type": "DatabricksNotebook",
+      "dependsOn": [
+        {
+          "activity": "Validate_Feeds_And_Process",
+          "dependencyConditions": [
+            "Succeeded"
+          ]
+        }
+      ],
+      "policy": {
+        "timeout": "0.01:00:00",
+        "retry": 1,
+        "retryIntervalInSeconds": 30,
+        "secureOutput": false,
+        "secureInput": false
+      },
+      "userProperties": [],
+      "typeProperties": {
+        "notebookPath": "/Shared/skypoints_databricks_pipeline",
+        "baseParameters": {}
+      },
+      "linkedServiceName": {
+        "referenceName": "ls_azure_databricks",
+        "type": "LinkedServiceReference"
       }
     }
   ],
