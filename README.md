@@ -1,97 +1,81 @@
-﻿# SkyPoints Global Airline Loyalty Data Engineering Platform
+﻿# SkyPoints Global Airline Loyalty Platform — Azure Cloud Native Architecture
 
-Production-grade, petabyte-scale data engineering pipeline for the SkyPoints loyalty program. Built with the **Medallion Architecture (Bronze -> Silver -> Gold)**, supporting daily ingestion of multi-billion row flat files and semi-structured JSON feeds.
+Production-grade, petabyte-scale data engineering platform for the SkyPoints loyalty program. Built and configured natively on **Microsoft Azure Cloud** using the **Medallion Architecture (Bronze -> Silver -> Gold)**, supporting daily ingestion of multi-billion row flat files and semi-structured JSON feeds.
 
 ---
 
-## 1. Live Azure & Databricks Deployment
+## 1. Enterprise Azure Cloud Architecture
 
-| Resource | Service / Configuration | Live Azure Resource Name | Status |
+```
+                          DAILY AIRLINE FEEDS (Multi-Billion Scale)
+               Pipe-Delimited Profile Feed        Partner JSON Feed
+               (adls://landing/members/)          (adls://landing/redemptions/)
+                            │                                   │
+                            ▼                                   ▼
+               ┌────────────────────────────────────────────────────────┐
+               │            BRONZE LAYER (ADLS Gen2 Landing)            │
+               │   - RAW_MEMBER_PROFILES (audited raw payloads)         │
+               │   - RAW_REDEMPTION_FEED (raw variant JSONs)            │
+               └───────────────────────────┬────────────────────────────┘
+                                           │
+                        Azure Data Factory Orchestration & DQ Gates
+                                           ▼
+               ┌────────────────────────────────────────────────────────┐
+               │         SILVER LAYER (Databricks / Delta Lake)         │
+               │   - STG_MEMBER_PROFILES (Parsed, Typed, ISO dates)     │
+               │   - Derived: Age (from DOB, leap-year adjusted)        │
+               │   - Derived: Stale_Member (last flight > 90 days)      │
+               │   - FACT_REDEMPTIONS (Flattened transaction items)     │
+               └───────────────────────────┬────────────────────────────┘
+                                           │
+                      Windowed "Latest Record Wins" & Dynamic Routing
+                                           ▼
+               ┌────────────────────────────────────────────────────────┐
+               │          GOLD LAYER (Azure Serving Marts & Hub)        │
+               │   - TABLE_USA, TABLE_IND, TABLE_CAN, TABLE_PHIL, etc.  │
+               │   - VW_MEMBER_REDEMPTIONS_360 (Unified Analytical Hub) │
+               │   - QUARANTINE_MEMBERS (Dead-letter error sink)        │
+               └────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 2. Live Azure Cloud Infrastructure Components
+
+| Cloud Service | Azure Resource Name | Region | Configuration & Role |
 |---|---|---|---|
-| **Cloud Provider** | Microsoft Azure | `Azure subscription 1` (`9309ca0f-f25f-47e2-b887-bb4b9af961bf`) | **Active** |
-| **Resource Group** | Azure Resource Group | `rg-skypoints-loyalty` (`centralindia`) | **Active** |
-| **Data Lake** | ADLS Gen2 (Hierarchical Namespace) | `stskypointsspeubmfodhieo` | **Active** |
-| **Medallion Storage** | Containers: `landing`, `bronze`, `silver`, `gold` | Live on ADLS Gen2 | **Synced** |
-| **Compute Engine** | **Azure Databricks (Premium)** | `dbw-skypoints-loyalty` | **Active** |
-| **Databricks URL** | Direct Workspace Access | [adb-7405606935596016.16.azuredatabricks.net](https://adb-7405606935596016.16.azuredatabricks.net) | **Live** |
-
----
-
-## 2. Architecture Overview
-
-```
-                      DAILY FEEDS (Multi-Billion Scale)
-             Pipe-Delimited Profile Feed        Partner JSON Feed
-             (adls://landing/members/)          (adls://landing/redemptions/)
-                          │                                   │
-                          ▼                                   ▼
-             ┌────────────────────────────────────────────────────────┐
-             │            BRONZE LAYER (Raw / Landing)                │
-             │   - RAW_MEMBER_PROFILES (audited raw payloads)         │
-             │   - RAW_REDEMPTION_FEED (raw variant JSONs)            │
-             └───────────────────────────┬────────────────────────────┘
-                                         │
-                         Data Quality Gates & Cleansing
-                                         ▼
-             ┌────────────────────────────────────────────────────────┐
-             │            SILVER LAYER (Staging & Enriched)           │
-             │   - STG_MEMBER_PROFILES (Parsed, Typed, ISO dates)     │
-             │   - Derived: Age (from DOB)                            │
-             │   - Derived: Stale_Member (last flight > 90 days)      │
-             │   - FACT_REDEMPTIONS (Flattened transactions)          │
-             └───────────────────────────┬────────────────────────────┘
-                                         │
-                    Windowed "Latest Record Wins" & Routing
-                                         ▼
-             ┌────────────────────────────────────────────────────────┐
-             │            GOLD LAYER (Marts / Country Tables)         │
-             │   - TABLE_USA, TABLE_IND, TABLE_CAN, TABLE_PHIL, etc.  │
-             │   - VW_MEMBER_REDEMPTIONS_360 (Unified Analytical Hub) │
-             │   - QUARANTINE_MEMBERS (Rejected records with reasons) │
-             └────────────────────────────────────────────────────────┘
-```
+| **Data Lake Storage** | `stskypointsspeubmfodhieo` | Central India | **ADLS Gen2** with Hierarchical Namespace enabled. Hosts Medallion containers: `landing`, `bronze`, `silver`, `gold`. |
+| **Compute & ETL** | `dbw-skypoints-loyalty` | Central India | **Azure Databricks (Premium)** with Unity Catalog & Serverless Spark execution for distributed Delta Lake processing. |
+| **Orchestration** | `adf-skypoints-loyalty` | Central India | **Azure Data Factory** orchestrator running daily ingestion validation, compute dispatch, and automated monitoring. |
+| **Data Warehouse DDL** | Snowflake / Delta Lake | Cloud DW | Production DDLs with micro-partitioning/clustering on `(country, member_id)` and SCD Type 1/2 tracking. |
 
 ---
 
 ## 3. Assessment Deliverables Matrix
 
-| # | Deliverable | Location | Key Design Decisions |
+| # | Assessment Deliverable | Azure Implementation Asset | Technical Highlights |
 |---|---|---|---|
-| **1** | **DDL Specifications** | `sql/01_ddl_snowflake.sql`<br>`sql/02_ddl_azure_delta.sql` | Production DDLs for Snowflake & Azure Delta Lake with micro-partitioning / clustering keys on `(country, member_id)`. |
-| **2** | **Staging Enrichment** | `sql/03_transformations.sql`<br>`src/transformations.py`<br>`notebooks/skypoints_databricks_pipeline.py` | Accurate `Age` derivation from DOB; `Stale_Member` flag where `days_since_flight > 90` or never flown. |
-| **3** | **Country Routing & "Latest Wins"** | `sql/03_transformations.sql`<br>`src/transformations.py`<br>`notebooks/skypoints_databricks_pipeline.py` | Window rank: `ROW_NUMBER() OVER (PARTITION BY member_id ORDER BY last_flight_date DESC, enrollment_date DESC)`. Moving countries deactivates the prior country table. |
-| **4** | **JSON Redemption Flattening** | `sql/03_transformations.sql`<br>`src/parsers.py`<br>`notebooks/skypoints_databricks_pipeline.py` | Unpacks nested `redemptions` array into individual rows; joins back to member profile for Member 360 view. |
-| **5** | **Data Validations & Quarantine** | `src/validators.py`<br>`tests/test_validations.py` | Mandatory field checks, PK uniqueness, zero-padded DOB fix (`3051985` -> `03051985`), flight > enrollment sequence check, and corrupt data quarantine. |
-| **6** | **Live Demonstration** | `infra/deploy_azure.ps1`<br>`infra/main.bicep`<br>`notebooks/skypoints_databricks_pipeline.py` | Live Azure ADLS Gen2 storage + Azure Databricks Premium workspace deployed and validated. |
+| **1** | **DDL Specifications** | `sql/01_ddl_snowflake.sql`<br>`sql/02_ddl_azure_delta.sql` | Production DDLs for Snowflake & Delta Lake on ADLS Gen2 with micro-partitioning / clustering keys on `(country, member_id)`. |
+| **2** | **Staging Derived Metrics** | `notebooks/skypoints_databricks_pipeline.py`<br>`sql/03_transformations.sql` | • **Age**: Derived from DOB accounting for multi-decade leap year drift.<br>• **Stale_Member**: `Y` if `last_flight_date` is NULL or $>90$ days ago; otherwise `N`. |
+| **3** | **Country Routing & "Latest Wins"** | `notebooks/skypoints_databricks_pipeline.py`<br>`sql/03_transformations.sql` | Window ranking: `ROW_NUMBER() OVER (PARTITION BY member_id ORDER BY last_flight_date DESC)`. Elena moved from USA to Canada $\rightarrow$ automatically routes to `table_can` and deactivates `table_usa`. |
+| **4** | **JSON Redemption Flattening** | `notebooks/skypoints_databricks_pipeline.py`<br>`sql/03_transformations.sql` | Unpacks nested `redemptions: [...]` array into individual rows; joins back to member profile via **Broadcast Hash Join** for Member 360 view. |
+| **5** | **Data Validations & Quarantine** | `src/validators.py`<br>`notebooks/skypoints_databricks_pipeline.py` | Mandatory field checks, PK uniqueness, zero-padded DOB fix (`3051985` &rarr; `03051985`), flight > enrollment sequence check, and corrupt data quarantine. |
+| **6** | **Cloud Orchestration & Demo** | `adf/pipeline/pipeline_skypoints_orchestrator.json`<br>`adf/linkedService/` | Master Azure Data Factory pipeline with GetMetadata gatekeeper validation, Databricks dispatch, and recurring schedule triggers. |
 
 ---
 
-## 4. Multi-Billion Scale Engineering Highlights
+## 4. Multi-Billion Scale Engineering Strategy
 
-1. **Distributed Compute**: Apache Spark on Azure Databricks distributes workloads across nodes, scaling elastically for petabyte-scale loyalty workloads.
-2. **Dynamic Delta Partition Overwrite**: Eliminates static loops over country tables; writes to `gold/members_by_country` partitioned by `country` in a single distributed pass.
-3. **Quarantine Isolation Pattern**: Malformed records are routed to an append-only dead-letter sink on ADLS Gen2 (`quarantine_members`) without breaking pipeline execution.
-4. **Auto Loader (`cloudFiles`) Ready**: Supports streaming ingestion as new files drop into the ADLS Gen2 landing container.
-
----
-
-## 5. How to Run Locally
-
-### Run the Pipeline
-```powershell
-python -m src.pipeline
-```
-
-### Run Automated Tests (100% Pass)
-```powershell
-python -m pytest -v
-```
+1. **Databricks Auto Loader (`cloudFiles`)**: Scalable event-driven file discovery via Azure Event Grid notifications, eliminating directory crawl bottlenecks on petabytes of incoming daily files.
+2. **Delta Dynamic Partition Overwrites**: Organizes data into `country=<CODE>` storage partitions in a single distributed pass, eliminating 50 sequential table scan loops.
+3. **Compaction & Z-Ordering**: Runs `OPTIMIZE members_by_country ZORDER BY (member_id)` to resolve the small-file problem and co-locate records on disk.
+4. **Broadcast Hash Joins**: Broadcasts the compact aggregated redemptions table across worker nodes, eliminating cluster-wide network shuffle when joining against billions of member profiles.
+5. **Dead-Letter Quarantine Pattern**: Isolates corrupted records into `quarantine_members` with failure reason tags, ensuring multi-hour batch pipelines complete without interruption.
 
 ---
 
-## 6. How to Run in Azure Databricks
+## 5. Live Inspection in Azure Cloud UI
 
-1. Open your workspace: [https://adb-7405606935596016.16.azuredatabricks.net](https://adb-7405606935596016.16.azuredatabricks.net)
-2. In the sidebar, navigate to **Workspace $\rightarrow$ Users $\rightarrow$ [Your Email]**.
-3. Click **Import** and upload `notebooks/skypoints_databricks_pipeline.py`.
-4. Attach to a cluster and click **Run All**.
+* **Azure Data Lake Storage Gen2**: In Azure Portal, open **Storage accounts &rarr; `stskypointsspeubmfodhieo` &rarr; Storage browser**. Inspect the `gold/country_tables/` and `gold/marts/` directories.
+* **Azure Databricks Studio**: In Databricks, navigate to **Workspace &rarr; Users &rarr; `skypoints_databricks_pipeline`** to view the live PySpark execution cells.
+* **Azure Data Factory Studio**: In ADF Studio, open **Author &rarr; Pipelines &rarr; `pipeline_skypoints_orchestrator`** to view the visual DAG, or **Monitor** to view the verified execution run.
